@@ -3,12 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Game Coin Checkout</title>
+    <title>कमीशन क्लाउड | Commission Cloud</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0f172a; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; box-sizing: border-box; }
         .pay-card { max-width: 380px; width: 100%; background: #1e293b; color: #ffffff; padding: 25px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.4); text-align: center; border: 1px solid #334155; }
-        .game-title { font-size: 20px; font-weight: 700; color: #38bdf8; margin-bottom: 5px; }
-        .coin-pack { font-size: 15px; color: #facc15; font-weight: 600; margin-bottom: 12px; }
+        .brand-header { margin-bottom: 12px; }
+        .game-title { font-size: 24px; font-weight: 700; color: #38bdf8; margin: 0; }
+        .sub-title { font-size: 13px; font-weight: 500; color: #94a3b8; letter-spacing: 0.5px; margin-top: 3px; }
         .order-sub { font-size: 12px; color: #94a3b8; margin-bottom: 15px; }
         .amount-tag { font-size: 34px; font-weight: 800; color: #4ade80; margin: 10px 0; }
         .discount-badge { background-color: #064e3b; color: #6ee7b7; border: 1px solid #059669; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; margin-bottom: 10px; display: inline-block; }
@@ -24,8 +25,10 @@
 <body>
 
 <div class="pay-card">
-    <div class="game-title" id="gameTitle">Game Store</div>
-    <div class="coin-pack" id="coinDisplay">🎮 Coins Pack</div>
+    <div class="brand-header">
+        <div class="game-title" id="gameTitle">कमीशन क्लाउड</div>
+        <div class="sub-title">Commission Cloud</div>
+    </div>
     <div class="order-sub">Order ID: <span id="displayOrderId">Generating...</span></div>
 
     <div id="discountInfo"></div>
@@ -46,18 +49,13 @@
     let currentOrderId = null;
     let pollInterval = null;
     let merchantUpi = '';
-    let merchantName = 'Game Store';
+    let merchantName = 'Commission Cloud';
 
     window.addEventListener('DOMContentLoaded', () => {
         const urlParams = new URLSearchParams(window.location.search);
         
-        // गेम से आने वाले पैरामीटर्स
+        // URL से आने वाला रिचार्ज अमाउंट (जैसे ?amount=198)
         const amountFromUrl = parseFloat(urlParams.get('amount')) || 10;
-        const coinsFromUrl = urlParams.get('coins');
-        
-        if (coinsFromUrl) {
-            document.getElementById('coinDisplay').innerText = `🪙 ${coinsFromUrl} Coins`;
-        }
 
         fetch('/api/admin/get-upi')
             .then(res => res.json())
@@ -65,7 +63,6 @@
                 if (data.upiId) merchantUpi = data.upiId;
                 if (data.merchantName) {
                     merchantName = data.merchantName;
-                    document.getElementById('gameTitle').innerText = merchantName;
                 }
                 initPayment(amountFromUrl);
             })
