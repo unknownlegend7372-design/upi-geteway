@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game Coin Checkout</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0f172a; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; box-sizing: border-box; }
+        .pay-card { max-width: 380px; width: 100%; background: #1e293b; color: #ffffff; padding: 25px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.4); text-align: center; border: 1px solid #334155; }
+        .game-title { font-size: 20px; font-weight: 700; color: #38bdf8; margin-bottom: 5px; }
+        .coin-pack { font-size: 15px; color: #facc15; font-weight: 600; margin-bottom: 12px; }
+        .order-sub { font-size: 12px; color: #94a3b8; margin-bottom: 15px; }
+        .amount-tag { font-size: 34px; font-weight: 800; color: #4ade80; margin: 10px 0; }
+        .discount-badge { background-color: #064e3b; color: #6ee7b7; border: 1px solid #059669; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; margin-bottom: 10px; display: inline-block; }
+        .qr-wrapper { margin: 12px auto; padding: 12px; border-radius: 14px; display: inline-block; background: #ffffff; }
+        .qr-wrapper img { width: 200px; height: 200px; display: block; border-radius: 6px; }
+        .badge { display: inline-block; padding: 6px 14px; border-radius: 20px; font-weight: 700; font-size: 12px; margin-top: 10px; }
+        .status-PENDING { background-color: #78350f; color: #fde68a; }
+        .status-SUCCESS { background-color: #14532d; color: #86efac; }
+        .app-btn { display: none; width: 100%; background: #2563eb; color: white; text-decoration: none; padding: 12px; border-radius: 10px; font-weight: bold; margin-top: 15px; box-sizing: border-box; }
+        .note { font-size: 12px; color: #94a3b8; margin-top: 15px; }
+    </style>
+</head>
+<body>
+
+<div class="pay-card">
+    <div class="game-title" id="gameTitle">Game Store</div>
+    <div class="coin-pack" id="coinDisplay">🎮 Coins Pack</div>
+    <div class="order-sub">Order ID: <span id="displayOrderId">Generating...</span></div>
+
+    <div id="discountInfo"></div>
+    <div class="amount-tag">₹ <span id="displayAmount">0.00</span></div>
+
+    <div class="qr-wrapper">
+        <img id="qrImage" src="" alt="UPI QR Code">
+    </div>
+
+    <div><span id="displayStatus" class="badge status-PENDING">Awaiting Payment...</span></div>
+
+    <a id="intentBtn" href="#" class="app-btn">Pay via UPI App</a>
+
+    <div class="note">GPay, PhonePe, Paytm या किसी भी UPI ऐप से स्कैन करके पे करें।</div>
+</div>
+
+<script>
+    let currentOrderId = null;
+    let pollInterval = null;
+    let merchantUpi = '';
+    let merchantName = 'Game Store';
+
+    window.addEventListener('DOMContentLoaded', () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        
+        // गेम से आने वाले पैरामीटर्स
+        const amountFromUrl = parseFloat(urlParams.get('amount')) || 10;
+        const coinsFromUrl = urlParams.get('coins');
+        
+        if (coinsFromUrl) {
+            document.getElementById('coinDisplay').innerText = `🪙 ${coinsFromUrl} Coins`;
+        }
+
+        fetch('/api/admin/get-upi')
+            .then(res => res.json())
+            .then(data => {
+                if (data.upiId) merchantUpi = data.upiId;
+                if (data.merchantName) {
+                    merchantName = data.merchantName;
+                    document.getElementById('gameTitle').innerText = merchantName;
+                }
+                initPayment(amountFromUrl);
+            })
+            .catch(() => {
+                initPayment(amountFromUrl);
+            });
+    });
+
+    function initPayment(baseAmt) {
+        fetch('/api/payment/create-order', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ amount: baseAmt })
+        })
+        .then(res => res.json())
+        .then(data => {
+            currentOrderId = data.orderId || data.id;
+            const finalPayAmount = parseFloat(data.amount).toFixed(2);
+            const discountP = data.discountPaise || 0;
+
+            document.getElementById('displayOrderId').innerText = currentOrderId;
+            document.getElementById('displayAmount').innerText = finalPayAmount;
+
+            if (discountP > 0) {
+                document.getElementById('discountInfo').innerHTML = 
+                    `<span class="discount-badge">🎉 विशेष छूट: ${discountP} पैसे की छूट!</span>`;
+            }
+
+            const upi = merchantUpi || 'upi@okaxis';
+            const upiString = `upi://pay?pa=${encodeURIComponent(upi)}&pn=${encodeURIComponent(merchantName)}&am=${finalPayAmount}&cu=INR`;
+            document.getElementById('qrImage').src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(upiString)}`;
+
+            const intentBtn = document.getElementById('intentBtn');
+            intentBtn.href = upiString;
+            if (/Android|iPhone/i.test(navigator.userAgent)) {
+                intentBtn.style.display = 'block';
+            }
+
+            if (pollInterval) clearInterval(pollInterval);
+            pollInterval = setInterval(checkOrderStatus, 2500);
+        })
+        .catch(err => {
+            alert("ऑर्डर लोड नहीं हो सका: " + err);
+        });
+    }
+
+    function checkOrderStatus() {
+        if (!currentOrderId) return;
+        fetch(`/api/payment/status/${currentOrderId}`)
+            .then(res => res.json())
+            .then(data => {
+                const status = (data.status || '').toUpperCase();
+                if (status.includes('PAID') || status === 'SUCCESS') {
+                    const statusEl = document.getElementById('displayStatus');
+                    statusEl.innerText = "PAYMENT SUCCESSFUL! 🎉";
+                    statusEl.className = "badge status-SUCCESS";
+                    clearInterval(pollInterval);
+                }
+            }).catch(e => console.log(e));
+    }
+</script>
+
+</body>
+</html>
