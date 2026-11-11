@@ -2,7 +2,11 @@ package com.example.demo;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.Resource;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Repository;
 import org.springframework.web.bind.annotation.*;
 
@@ -31,6 +35,18 @@ public class DemoApplication {
 
     public static void main(String[] args) {
         SpringApplication.run(DemoApplication.class, args);
+    }
+
+    // 0. एजेंट कंट्रोल पैनल सीधे लोड करने के लिए डायरेक्ट रूट
+    @GetMapping(value = {"/agent", "/agent.html"}, produces = MediaType.TEXT_HTML_VALUE)
+    public ResponseEntity<Resource> getAgentPanel() {
+        return ResponseEntity.ok(new ClassPathResource("static/agent.html"));
+    }
+
+    // 0.1 मेन चेकआउट पेज सीधे लोड करने के लिए डायरेक्ट रूट
+    @GetMapping(value = {"/", "/index.html"}, produces = MediaType.TEXT_HTML_VALUE)
+    public ResponseEntity<Resource> getIndexPage() {
+        return ResponseEntity.ok(new ClassPathResource("static/index.html"));
     }
 
     // 1. स्क्रीन से UPI ID सेट करने के लिए API
