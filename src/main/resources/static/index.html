@@ -20,11 +20,33 @@
         .status-SUCCESS { background-color: #14532d; color: #86efac; }
         .app-btn { display: none; width: 100%; background: #2563eb; color: white; text-decoration: none; padding: 12px; border-radius: 10px; font-weight: bold; margin-top: 15px; box-sizing: border-box; }
         .note { font-size: 12px; color: #94a3b8; margin-top: 15px; }
+
+        /* ================== AGENT PANEL STYLES ================== */
+        #agentMasterOverlay { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: #f8fafc; z-index: 999999; overflow-y: auto; padding: 20px; box-sizing: border-box; color: #334155; }
+        .agent-container { max-width: 900px; margin: auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); }
+        .agent-auth-box { max-width: 360px; margin: 60px auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); text-align: center; }
+        .agent-top-bar { display: flex; gap: 20px; background: #f1f5f9; padding: 15px; border-radius: 8px; margin-bottom: 25px; align-items: flex-end; flex-wrap: wrap; }
+        .agent-form-group { display: flex; flex-direction: column; flex: 1; min-width: 200px; }
+        .agent-form-group label { font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #475569; text-align: left; }
+        .agent-input { padding: 9px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; outline: none; width: 100%; box-sizing: border-box; }
+        .agent-btn { background-color: #2563eb; color: white; border: none; padding: 9px 18px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+        .agent-btn:hover { background-color: #1d4ed8; }
+        .agent-table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }
+        .agent-table th, .agent-table td { border: 1px solid #e2e8f0; padding: 10px 8px; text-align: center; }
+        .agent-table th { background-color: #f8fafc; color: #334155; }
+        .agent-badge { display: inline-block; padding: 4px 10px; border-radius: 20px; font-weight: 700; font-size: 12px; }
+        .agent-status-PENDING { background-color: #fef3c7; color: #d97706; }
+        .agent-status-SUCCESS { background-color: #dcfce7; color: #15803d; }
+        .agent-status-REJECTED { background-color: #fee2e2; color: #b91c1c; }
+        .btn-approve { background-color: #16a34a; color: white; border: none; padding: 5px 10px; font-size: 12px; border-radius: 4px; margin-right: 4px; cursor: pointer; }
+        .btn-reject { background-color: #dc2626; color: white; border: none; padding: 5px 10px; font-size: 12px; border-radius: 4px; cursor: pointer; }
+        #adminDashboard { display: none; }
     </style>
 </head>
 <body>
 
-<div class="pay-card">
+<!-- CLIENT PAYMENT CARD -->
+<div class="pay-card" id="customerPayCard">
     <div class="brand-header">
         <div class="game-title" id="gameTitle">कमीशन क्लाउड</div>
         <div class="sub-title">Commission Cloud</div>
@@ -45,31 +67,90 @@
     <div class="note">GPay, PhonePe, Paytm या किसी भी UPI ऐप से स्कैन करके पे करें।</div>
 </div>
 
+<!-- ================== AGENT MASTER PANEL OVERLAY ================== -->
+<div id="agentMasterOverlay">
+    <!-- Login Gate -->
+    <div class="agent-auth-box" id="authBox">
+        <h3 style="margin-top:0;">🔐 Agent Access</h3>
+        <p style="font-size:13px; color:#64748b;">कंट्रोल पैनल खोलने के लिए पिन दर्ज करें:</p>
+        <input type="password" id="agentPin" placeholder="Enter PIN" class="agent-input" style="margin-bottom: 12px;">
+        <button class="agent-btn" style="width: 100%;" onclick="verifyPin()">Unlock Panel</button>
+    </div>
+
+    <!-- Main Admin Panel -->
+    <div class="agent-container" id="adminDashboard">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h2 style="margin: 0; font-size: 20px;">Agent Control Panel</h2>
+            <button onclick="logoutAgent()" class="agent-btn" style="background-color: #64748b; padding: 6px 12px; font-size: 12px;">Lock Panel</button>
+        </div>
+
+        <div class="agent-top-bar">
+            <div class="agent-form-group">
+                <label>मर्चेंट नाम (Business / Game Name)</label>
+                <input type="text" id="merchantName" placeholder="दुकान या गेम का नाम" class="agent-input">
+            </div>
+            <div class="agent-form-group">
+                <label>पेमेंट पाने वाली UPI ID</label>
+                <input type="text" id="merchantUpi" placeholder="उदा. name@upi" class="agent-input">
+            </div>
+            <button class="agent-btn" onclick="saveMerchantSettings()">Save Details</button>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="margin: 0;">Recent Transactions</h3>
+            <button onclick="loadOrders()" class="agent-btn" style="background-color: #0284c7; padding: 6px 12px; font-size: 12px;">Refresh</button>
+        </div>
+
+        <table class="agent-table">
+            <thead>
+                <tr>
+                    <th>Order ID</th>
+                    <th>Amount</th>
+                    <th>Customer UTR</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="ordersTableBody">
+                <tr><td colspan="5">No orders yet</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
 <script>
+    // URL Check: क्या एजेंट पैनल खोलना है? (?admin=1 या #admin)
+    const urlParams = new URLSearchParams(window.location.search);
+    const isAdminRequested = urlParams.has('admin') || window.location.hash.includes('admin');
+
+    if (isAdminRequested) {
+        document.getElementById('agentMasterOverlay').style.display = 'block';
+        document.getElementById('customerPayCard').style.display = 'none';
+        document.body.style.backgroundColor = '#f8fafc';
+    }
+
+    /* ---------------- CLIENT PAYMENT LOGIC ---------------- */
     let currentOrderId = null;
     let pollInterval = null;
-    let merchantUpi = '';
-    let merchantName = 'Commission Cloud';
+    let merchantUpiVal = '';
+    let merchantNameVal = 'Commission Cloud';
 
-    window.addEventListener('DOMContentLoaded', () => {
-        const urlParams = new URLSearchParams(window.location.search);
-        
-        // URL से आने वाला रिचार्ज अमाउंट (जैसे ?amount=198)
-        const amountFromUrl = parseFloat(urlParams.get('amount')) || 10;
+    if (!isAdminRequested) {
+        window.addEventListener('DOMContentLoaded', () => {
+            const amountFromUrl = parseFloat(urlParams.get('amount')) || 10;
 
-        fetch('/api/admin/get-upi')
-            .then(res => res.json())
-            .then(data => {
-                if (data.upiId) merchantUpi = data.upiId;
-                if (data.merchantName) {
-                    merchantName = data.merchantName;
-                }
-                initPayment(amountFromUrl);
-            })
-            .catch(() => {
-                initPayment(amountFromUrl);
-            });
-    });
+            fetch('/api/admin/get-upi')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.upiId) merchantUpiVal = data.upiId;
+                    if (data.merchantName) merchantNameVal = data.merchantName;
+                    initPayment(amountFromUrl);
+                })
+                .catch(() => {
+                    initPayment(amountFromUrl);
+                });
+        });
+    }
 
     function initPayment(baseAmt) {
         fetch('/api/payment/create-order', {
@@ -91,8 +172,8 @@
                     `<span class="discount-badge">🎉 विशेष छूट: ${discountP} पैसे की छूट!</span>`;
             }
 
-            const upi = merchantUpi || 'upi@okaxis';
-            const upiString = `upi://pay?pa=${encodeURIComponent(upi)}&pn=${encodeURIComponent(merchantName)}&am=${finalPayAmount}&cu=INR`;
+            const upi = merchantUpiVal || 'upi@okaxis';
+            const upiString = `upi://pay?pa=${encodeURIComponent(upi)}&pn=${encodeURIComponent(merchantNameVal)}&am=${finalPayAmount}&cu=INR`;
             document.getElementById('qrImage').src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(upiString)}`;
 
             const intentBtn = document.getElementById('intentBtn');
@@ -122,6 +203,108 @@
                     clearInterval(pollInterval);
                 }
             }).catch(e => console.log(e));
+    }
+
+    /* ---------------- AGENT DASHBOARD LOGIC ---------------- */
+    const SECRET_PIN = "1234";
+
+    function verifyPin() {
+        const entered = document.getElementById('agentPin').value;
+        if (entered === SECRET_PIN) {
+            document.getElementById('authBox').style.display = 'none';
+            document.getElementById('adminDashboard').style.display = 'block';
+            initDashboard();
+        } else {
+            alert('गलत पिन!');
+        }
+    }
+
+    function logoutAgent() {
+        document.getElementById('authBox').style.display = 'block';
+        document.getElementById('adminDashboard').style.display = 'none';
+        document.getElementById('agentPin').value = '';
+    }
+
+    function initDashboard() {
+        const savedName = localStorage.getItem('app_merchant_name');
+        const savedUpi = localStorage.getItem('app_merchant_upi');
+
+        if (savedName) document.getElementById('merchantName').value = savedName;
+        if (savedUpi) {
+            document.getElementById('merchantUpi').value = savedUpi;
+            fetch('/api/admin/set-upi', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ upiId: savedUpi })
+            }).catch(e => console.log(e));
+        } else {
+            fetch('/api/admin/get-upi')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.upiId) document.getElementById('merchantUpi').value = data.upiId;
+                }).catch(err => console.log(err));
+        }
+
+        loadOrders();
+        setInterval(loadOrders, 3000);
+    }
+
+    function saveMerchantSettings() {
+        const name = document.getElementById('merchantName').value.trim();
+        const upi = document.getElementById('merchantUpi').value.trim();
+
+        if (!upi) return alert('कृपया वैध UPI ID दर्ज करें!');
+
+        localStorage.setItem('app_merchant_name', name);
+        localStorage.setItem('app_merchant_upi', upi);
+
+        fetch('/api/admin/set-upi', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ upiId: upi })
+        })
+        .then(res => res.json())
+        .then(() => alert('सेटिंग्स सुरक्षित हो गईं!'))
+        .catch(err => alert('एरर: ' + err));
+    }
+
+    function updateAction(orderId, status) {
+        fetch('/api/admin/update-status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderId: orderId, status: status })
+        }).then(res => res.json()).then(() => loadOrders());
+    }
+
+    function loadOrders() {
+        fetch('/api/admin/orders')
+            .then(res => res.json())
+            .then(orders => {
+                const tbody = document.getElementById('ordersTableBody');
+                if (!orders || orders.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5">No orders yet</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = orders.slice().reverse().map(o => {
+                    const isSuccess = (o.status || '').includes('PAID') || o.status === 'SUCCESS';
+                    const isRejected = o.status === 'REJECTED';
+                    const badgeClass = isSuccess ? 'agent-status-SUCCESS' : (isRejected ? 'agent-status-REJECTED' : 'agent-status-PENDING');
+                    const displayAmt = parseFloat(o.amount || 0).toFixed(2);
+
+                    return `
+                    <tr>
+                        <td>${o.orderId || ''}</td>
+                        <td>₹${displayAmt}</td>
+                        <td>${o.customerUtr || 'Not submitted'}</td>
+                        <td><span class="agent-badge ${badgeClass}">${o.status}</span></td>
+                        <td>
+                            <button class="btn-approve" onclick="updateAction('${o.orderId}', 'PAID SUCCESSFULLY')">Approve</button>
+                            <button class="btn-reject" onclick="updateAction('${o.orderId}', 'REJECTED')">Reject</button>
+                        </td>
+                    </tr>
+                    `;
+                }).join('');
+            }).catch(err => console.log(err));
     }
 </script>
 
