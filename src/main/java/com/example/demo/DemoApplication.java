@@ -140,7 +140,7 @@ public class DemoApplication {
         return res;
     }
 
-    // 5. कस्टमर द्वारा UTR सबमिट करते ही इंस्टेंट मैचिंग (चाहे 100 कस्टमर एक साथ हों)
+    // 5. कस्टमर द्वारा UTR सबमिट करते ही इंस्टेंट मैचिंग (3 मिनट बाद भी काम करेगा)
     @PostMapping("/api/payment/submit-utr")
     public Map<String, Object> submitUtr(@RequestBody Map<String, String> payload) {
         Map<String, Object> res = new HashMap<>();
@@ -168,7 +168,7 @@ public class DemoApplication {
             PaymentOrder order = opt.get();
             order.setCustomerUtr(utr);
 
-            // जाँचें कि क्या इस UTR का बैंक SMS पहले ही आ चुका है
+            // जाँचें कि क्या इस UTR का बैंक SMS पहले ही आ चुका है (बिना किसी टाइम-लिमिट के)
             Optional<BankSmsLog> smsOpt = smsLogRepository.findById(utr);
             if (smsOpt.isPresent()) {
                 BankSmsLog sms = smsOpt.get();
@@ -215,7 +215,7 @@ public class DemoApplication {
         return res;
     }
 
-    // 8. यूनिवर्सल CREDIT-ONLY SMS वेबहुक (कोई अकाउंट नंबर फिक्स नहीं, 3-मिनट विंडो)
+    // 8. यूनिवर्सल CREDIT-ONLY SMS वेबहुक (कोई अकाउंट नंबर फिक्स नहीं, 3-मिनट ऑटो विंडो)
     @PostMapping(value = {"/api/sms/webhook", "/api/payments/sms-webhook"})
     public Map<String, Object> handleBankSms(@RequestBody(required = false) String rawBody,
                                             @RequestParam Map<String, String> allParams) {
@@ -313,23 +313,12 @@ public class DemoApplication {
             }
         }
 
-        // 6. पिछले 3 मिनट के सक्रिय पेंडिंग ऑर्डर्स निकालें
         List<PaymentOrder> pendingOrders = orderRepository.findByStatus("PENDING");
-        LocalDateTime allowedTimeLimit = LocalDateTime.now().minusMinutes(3);
-        List<PaymentOrder> matchingAmountOrders = new ArrayList<>();
 
-        for (PaymentOrder order : pendingOrders) {
-            if (Math.abs(order.getAmount() - amount) < 0.01) {
-                if (order.getCreatedAt() == null || order.getCreatedAt().isAfter(allowedTimeLimit)) {
-                    matchingAmountOrders.add(order);
-                }
-            }
-        }
-
-        // प्राथमिकता 1 (100 कस्टमर केस): जिस कस्टमर ने पहले से यही UTR डाल रखा है, सीधे उसका ऑर्डर पास करें
+        // प्राथमिकता 1 (100 कस्टमर या देर से UTR डालने वाला केस): जिस कस्टमर ने यह UTR डाल रखा है, सीधे उसका ऑर्डर पास करें (भले ही 3 मिनट से ज्यादा हो गए हों)
         if (utr != null) {
-            for (PaymentOrder order : matchingAmountOrders) {
-                if (utr.equals(order.getCustomerUtr())) {
+            for (PaymentOrder order : pendingOrders) {
+                if (utr.equals(order.getCustomerUtr()) && Math.abs(order.getAmount() - amount) < 0.01) {
                     order.setStatus("PAID SUCCESSFULLY");
                     order.setVerifiedBy("SMS_UTR_MATCH (" + senderName + ")");
                     orderRepository.save(order);
@@ -343,7 +332,18 @@ public class DemoApplication {
             }
         }
 
-        // प्राथमिकता 2 (सिंगल कस्टमर केस): अगर पिछले 3 मिनट में इसी रकम का सिर्फ़ 1 ही ऑर्डर है, तो ऑटो-अप्रूव करें
+        // प्राथमिकता 2 (सिंगल कस्टमर केस): पिछले 3 मिनट में इसी रकम का सिर्फ़ 1 ही सक्रिय ऑर्डर है, तो ऑटो-अप्रूव करें
+        LocalDateTime allowedTimeLimit = LocalDateTime.now().minusMinutes(3);
+        List<PaymentOrder> matchingAmountOrders = new ArrayList<>();
+
+        for (PaymentOrder order : pendingOrders) {
+            if (Math.abs(order.getAmount() - amount) < 0.01) {
+                if (order.getCreatedAt() == null || order.getCreatedAt().isAfter(allowedTimeLimit)) {
+                    matchingAmountOrders.add(order);
+                }
+            }
+        }
+
         if (matchingAmountOrders.size() == 1) {
             PaymentOrder singleOrder = matchingAmountOrders.get(0);
             singleOrder.setStatus("PAID SUCCESSFULLY");
@@ -363,7 +363,7 @@ public class DemoApplication {
             return res;
         }
 
-        // प्राथमिकता 3: SMS को सेव करें ताकि जैसे ही कस्टमर UTR डाले, उसका ऑर्डर तुरंत पास हो जाए
+        // प्राथमिकता 3: SMS को सुरक्षित सेव करें ताकि कस्टमर जब भी UTR डाले (3 मिनट के अंदर या बाद में), तुरंत अप्रूव हो जाए
         if (utr != null) {
             saveSmsLog(utr, amount, senderName, false);
         }
