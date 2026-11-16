@@ -20,12 +20,13 @@ import java.util.regex.Pattern;
 public class DemoApplication {
 
     private final OrderRepository orderRepository;
+    private final SmsLogRepository smsLogRepository;
     private final LicenseService licenseService;
-    // स्क्रीन से जो UPI ID सेट की जाएगी वही यहाँ सुरक्षित रहेगी
     private String merchantUpiId = "";
 
-    public DemoApplication(OrderRepository orderRepository, LicenseService licenseService) {
+    public DemoApplication(OrderRepository orderRepository, SmsLogRepository smsLogRepository, LicenseService licenseService) {
         this.orderRepository = orderRepository;
+        this.smsLogRepository = smsLogRepository;
         this.licenseService = licenseService;
     }
 
@@ -57,16 +58,14 @@ public class DemoApplication {
         return res;
     }
 
-    // 3. नया ऑर्डर और यूनिक डिस्काउंट अमाउंट जनरेट करने की API (Anti-Collision Lock + Remote Kill Switch)
+    // 3. नया ऑर्डर जनरेट करने की API (EXACT AMOUNT - ₹0.00 LOSS, 3-MIN WINDOW)
     @PostMapping("/api/payment/create-order")
     public Map<String, Object> createOrder(@RequestBody(required = false) Map<String, Object> payload) {
         Map<String, Object> res = new HashMap<>();
 
-        // रिमोट लाइसेंस चेक: अगर स्टेटस BLOCKED है तो नया पेमेंट रोक दें
         if (!licenseService.isServiceActive()) {
             res.put("status", "SERVICE_SUSPENDED");
             res.put("message", "Service has been temporarily suspended. Please contact administrator.");
-            System.out.println(">>> BLOCKED ATTEMPT: Order creation rejected due to inactive license.");
             return res;
         }
 
@@ -79,57 +78,44 @@ public class DemoApplication {
             baseAmount = 10.0;
         }
 
-        // पिछले 20 मिनट के सक्रिय पेंडिंग ऑर्डर्स निकालें ताकि समान अमाउंट किसी और को न मिले
+        // पूरा Exact Amount रहेगा (₹0.00 लॉस)
+        double finalAmount = Math.round(baseAmount * 100.0) / 100.0;
+
+        // पिछले 3 मिनट के सक्रिय पेंडिंग ऑर्डर्स चेक करें (चाहे 2 हों या 100 कस्टमर)
         List<PaymentOrder> pendingOrders = orderRepository.findByStatus("PENDING");
-        Set<Double> busyAmounts = new HashSet<>();
-        LocalDateTime twentyMinutesAgo = LocalDateTime.now().minusMinutes(20);
+        LocalDateTime threeMinutesAgo = LocalDateTime.now().minusMinutes(3);
+        int activeSameAmountCount = 0;
 
         for (PaymentOrder po : pendingOrders) {
-            if (po.getCreatedAt() != null && po.getCreatedAt().isAfter(twentyMinutesAgo)) {
-                busyAmounts.add(po.getAmount());
+            if (po.getCreatedAt() != null && po.getCreatedAt().isAfter(threeMinutesAgo)) {
+                if (Math.abs(po.getAmount() - finalAmount) < 0.01) {
+                    activeSameAmountCount++;
+                }
             }
         }
 
-        // 1 से 50 पैसे के बीच ऐसा डिस्काउंट चुनें जो किसी अन्य सक्रिय ऑर्डर के पास न हो
-        double finalAmount = baseAmount;
-        int discountPaise = 0;
-        int attempts = 0;
-        Random rnd = new Random();
-
-        do {
-            discountPaise = rnd.nextInt(50) + 1; // 1 to 50 paise
-            double discount = discountPaise / 100.0;
-            finalAmount = Math.round((baseAmount - discount) * 100.0) / 100.0;
-            attempts++;
-        } while (busyAmounts.contains(finalAmount) && attempts < 50);
-
-        if (finalAmount <= 0) {
-            finalAmount = baseAmount;
-            discountPaise = 0;
-        }
-
+        boolean requireUtr = activeSameAmountCount > 0;
         String upiToUse = (this.merchantUpiId != null && !this.merchantUpiId.isEmpty()) 
                           ? this.merchantUpiId : "";
 
-        String orderId = "ORD" + System.currentTimeMillis();
+        String orderId = "ORD" + System.currentTimeMillis() + (new Random().nextInt(90) + 10);
 
         PaymentOrder order = new PaymentOrder();
         order.setOrderId(orderId);
         order.setAmount(finalAmount);
         order.setStatus("PENDING");
         order.setCustomerUtr("Not submitted");
+        order.setRequireUtr(requireUtr);
         order.setCreatedAt(LocalDateTime.now());
 
         orderRepository.save(order);
-
-        System.out.println(">>> CREATED ORDER: " + orderId + " | BASE: ₹" + baseAmount 
-                           + " | FINAL: ₹" + finalAmount + " (DISCOUNT: " + discountPaise + " PAISE)");
 
         res.put("orderId", orderId);
         res.put("id", orderId);
         res.put("amount", finalAmount);
         res.put("originalAmount", baseAmount);
-        res.put("discountPaise", discountPaise);
+        res.put("discountPaise", 0);
+        res.put("requireUtr", requireUtr);
         res.put("upiId", upiToUse);
         res.put("status", "PENDING");
         return res;
@@ -146,6 +132,7 @@ public class DemoApplication {
             res.put("id", order.getOrderId());
             res.put("status", order.getStatus());
             res.put("amount", order.getAmount());
+            res.put("requireUtr", order.isRequireUtr());
             res.put("customerUtr", order.getCustomerUtr());
         } else {
             res.put("status", "NOT_FOUND");
@@ -153,19 +140,49 @@ public class DemoApplication {
         return res;
     }
 
-    // 5. मैन्युअल UTR सबमिशन API (वैकल्पिक बैकअप)
+    // 5. कस्टमर द्वारा UTR सबमिट करते ही इंस्टेंट मैचिंग (चाहे 100 कस्टमर एक साथ हों)
     @PostMapping("/api/payment/submit-utr")
     public Map<String, Object> submitUtr(@RequestBody Map<String, String> payload) {
         Map<String, Object> res = new HashMap<>();
         String orderId = payload.get("orderId");
-        String utr = payload.get("utr");
+        String utr = payload.get("utr") != null ? payload.get("utr").trim() : "";
+
+        if (utr.length() != 12 || !utr.matches("\\d{12}")) {
+            res.put("status", "INVALID_UTR");
+            res.put("message", "Please enter a valid 12-digit UTR number.");
+            return res;
+        }
+
+        // चेक करें कि यह UTR पहले किसी दूसरे सफल ऑर्डर में इस्तेमाल तो नहीं हुआ
+        List<PaymentOrder> allOrders = orderRepository.findAll();
+        for (PaymentOrder existing : allOrders) {
+            if (utr.equals(existing.getCustomerUtr()) && "PAID SUCCESSFULLY".equals(existing.getStatus())) {
+                res.put("status", "UTR_ALREADY_USED");
+                res.put("message", "This UTR number has already been used.");
+                return res;
+            }
+        }
 
         Optional<PaymentOrder> opt = orderRepository.findById(orderId);
         if (opt.isPresent()) {
             PaymentOrder order = opt.get();
             order.setCustomerUtr(utr);
+
+            // जाँचें कि क्या इस UTR का बैंक SMS पहले ही आ चुका है
+            Optional<BankSmsLog> smsOpt = smsLogRepository.findById(utr);
+            if (smsOpt.isPresent()) {
+                BankSmsLog sms = smsOpt.get();
+                if (!sms.isUsed() && Math.abs(sms.getAmount() - order.getAmount()) < 0.01) {
+                    order.setStatus("PAID SUCCESSFULLY");
+                    order.setVerifiedBy("UTR_INSTANT_MATCH (" + sms.getSenderName() + ")");
+                    sms.setUsed(true);
+                    smsLogRepository.save(sms);
+                }
+            }
+
             orderRepository.save(order);
             res.put("status", "SUCCESS");
+            res.put("orderStatus", order.getStatus());
         } else {
             res.put("status", "NOT_FOUND");
         }
@@ -198,22 +215,19 @@ public class DemoApplication {
         return res;
     }
 
-    // 8. 100% यूनिवर्सल SMS वेबहुक (किसी भी भारतीय बैंक के लिए)
+    // 8. यूनिवर्सल CREDIT-ONLY SMS वेबहुक (कोई अकाउंट नंबर फिक्स नहीं, 3-मिनट विंडो)
     @PostMapping(value = {"/api/sms/webhook", "/api/payments/sms-webhook"})
     public Map<String, Object> handleBankSms(@RequestBody(required = false) String rawBody,
                                             @RequestParam Map<String, String> allParams) {
         Map<String, Object> res = new HashMap<>();
 
-        // रिमोट लाइसेंस चेक: अगर स्टेटस BLOCKED है तो SMS प्रोसेस न करें
         if (!licenseService.isServiceActive()) {
             res.put("status", "SERVICE_SUSPENDED");
-            System.out.println(">>> BLOCKED ATTEMPT: Incoming SMS webhook ignored due to inactive license.");
             return res;
         }
 
         String message = "";
 
-        // URL Parameters में से SMS ढूँढें
         if (allParams != null && !allParams.isEmpty()) {
             for (String key : new String[]{"text", "message", "msg", "content", "body"}) {
                 if (allParams.containsKey(key)) {
@@ -223,7 +237,6 @@ public class DemoApplication {
             }
         }
 
-        // अगर JSON Body के अंदर आया हो
         if ((message == null || message.trim().isEmpty()) && rawBody != null) {
             Pattern p = Pattern.compile("\"(?:text|message|msg|content|body)\"\\s*:\\s*\"(.*?)(?<!\\\\)\"", Pattern.DOTALL);
             Matcher m = p.matcher(rawBody);
@@ -234,10 +247,6 @@ public class DemoApplication {
             }
         }
 
-        System.out.println("==========================================");
-        System.out.println(">>> RAW INCOMING SMS: " + message);
-        System.out.println("==========================================");
-
         if (message == null || message.trim().isEmpty()) {
             res.put("status", "IGNORED_EMPTY");
             return res;
@@ -245,14 +254,20 @@ public class DemoApplication {
 
         String lower = message.toLowerCase();
 
-        // 1. डेबिट (पैसे कटने) के SMS को तुरंत छोड़ दें
-        if (lower.contains("sent rs") || lower.contains("dr. from") || lower.contains("debited") || lower.contains("dr from")) {
-            System.out.println(">>> IGNORED: Debit / Sent SMS detected.");
+        // नियम 1: कोई भी Debit / Sent / Paid मैसेज तुरंत ब्लॉक करें
+        if (lower.contains("debited") || lower.contains("sent") || lower.contains("paid") || 
+            lower.contains("withdrawn") || lower.contains("dr. from") || lower.contains("dr from")) {
             res.put("status", "IGNORED_DEBIT");
             return res;
         }
 
-        // 2. अमाउंट निकालना (Rs., INR, ₹ के बाद लिखी संख्या)
+        // नियम 2: केवल Credit / Received मैसेज को ही स्वीकार करें
+        if (!lower.contains("received") && !lower.contains("credited") && !lower.contains("cr. to") && !lower.contains("cr to")) {
+            res.put("status", "IGNORED_NON_CREDIT");
+            return res;
+        }
+
+        // 3. अमाउंट निकालना
         Double amount = null;
         Pattern amtPat = Pattern.compile("(?:rs\\.?|inr|₹)\\s*([0-9]+(?:\\.[0-9]{1,2})?)", Pattern.CASE_INSENSITIVE);
         Matcher amtMat = amtPat.matcher(message);
@@ -262,7 +277,7 @@ public class DemoApplication {
             } catch (Exception ignored) {}
         }
 
-        // 3. पूरे SMS में मौजूद 12 अंकों का UTR निकालना
+        // 4. 12 अंकों का UTR निकालना
         String utr = null;
         Pattern utrPat = Pattern.compile("(?:upi\\s*ref[:\\s]*|ref[:\\s]*|utr[:\\s]*|rrn[:\\s]*)([0-9]{12})", Pattern.CASE_INSENSITIVE);
         Matcher utrMat = utrPat.matcher(message);
@@ -276,41 +291,95 @@ public class DemoApplication {
             }
         }
 
-        System.out.println(">>> PARSED -> AMOUNT: ₹" + amount + " | UTR: " + utr);
+        // 5. भेजने वाले का नाम निकालना
+        String senderName = "Unknown";
+        Pattern namePat = Pattern.compile("from\\s+([A-Za-z0-9\\s.@_-]+?)\\s+(?:on|via|ref|upi)", Pattern.CASE_INSENSITIVE);
+        Matcher nameMat = namePat.matcher(message);
+        if (nameMat.find()) {
+            senderName = nameMat.group(1).trim();
+        }
 
-        // 4. पेंडिंग ऑर्डर से अमाउंट मैच करना और ऑटो-वेरिफाई करना (अधिकतम 25 मिनट पुराना ऑर्डर ही लें)
-        if (amount != null) {
-            List<PaymentOrder> pendingOrders = orderRepository.findByStatus("PENDING");
-            LocalDateTime allowedTimeLimit = LocalDateTime.now().minusMinutes(25);
+        if (amount == null) {
+            res.put("status", "IGNORED_NO_AMOUNT");
+            return res;
+        }
 
-            for (int i = pendingOrders.size() - 1; i >= 0; i--) {
-                PaymentOrder order = pendingOrders.get(i);
-                
-                // 1 पैसे से कम का अंतर यानी सही मैच
-                if (Math.abs(order.getAmount() - amount) < 0.01) {
-                    // अगर ऑर्डर पिछले 25 मिनट के अंदर बना है तभी पास करें
-                    if (order.getCreatedAt() == null || order.getCreatedAt().isAfter(allowedTimeLimit)) {
-                        order.setStatus("PAID SUCCESSFULLY");
-                        if (utr != null && !utr.isEmpty()) {
-                            order.setCustomerUtr(utr);
-                        }
-                        order.setVerifiedBy("SMS_AUTOMATION");
-                        orderRepository.save(order);
+        // डुप्लीकेट UTR SMS ब्लॉक करें
+        if (utr != null) {
+            Optional<BankSmsLog> existingSms = smsLogRepository.findById(utr);
+            if (existingSms.isPresent() && existingSms.get().isUsed()) {
+                res.put("status", "DUPLICATE_UTR_SMS");
+                return res;
+            }
+        }
 
-                        System.out.println(">>> AUTO-VERIFIED ORDER ID: " + order.getOrderId() + " WITH UTR: " + utr);
-                        res.put("status", "SUCCESS");
-                        res.put("orderId", order.getOrderId());
-                        res.put("utr", utr);
-                        return res;
-                    } else {
-                        System.out.println(">>> ORDER EXPIRED: Order ID " + order.getOrderId() + " is older than 25 minutes.");
-                    }
+        // 6. पिछले 3 मिनट के सक्रिय पेंडिंग ऑर्डर्स निकालें
+        List<PaymentOrder> pendingOrders = orderRepository.findByStatus("PENDING");
+        LocalDateTime allowedTimeLimit = LocalDateTime.now().minusMinutes(3);
+        List<PaymentOrder> matchingAmountOrders = new ArrayList<>();
+
+        for (PaymentOrder order : pendingOrders) {
+            if (Math.abs(order.getAmount() - amount) < 0.01) {
+                if (order.getCreatedAt() == null || order.getCreatedAt().isAfter(allowedTimeLimit)) {
+                    matchingAmountOrders.add(order);
                 }
             }
         }
 
-        res.put("status", "PROCESSED_NO_MATCH");
+        // प्राथमिकता 1 (100 कस्टमर केस): जिस कस्टमर ने पहले से यही UTR डाल रखा है, सीधे उसका ऑर्डर पास करें
+        if (utr != null) {
+            for (PaymentOrder order : matchingAmountOrders) {
+                if (utr.equals(order.getCustomerUtr())) {
+                    order.setStatus("PAID SUCCESSFULLY");
+                    order.setVerifiedBy("SMS_UTR_MATCH (" + senderName + ")");
+                    orderRepository.save(order);
+
+                    saveSmsLog(utr, amount, senderName, true);
+                    res.put("status", "SUCCESS");
+                    res.put("orderId", order.getOrderId());
+                    res.put("utr", utr);
+                    return res;
+                }
+            }
+        }
+
+        // प्राथमिकता 2 (सिंगल कस्टमर केस): अगर पिछले 3 मिनट में इसी रकम का सिर्फ़ 1 ही ऑर्डर है, तो ऑटो-अप्रूव करें
+        if (matchingAmountOrders.size() == 1) {
+            PaymentOrder singleOrder = matchingAmountOrders.get(0);
+            singleOrder.setStatus("PAID SUCCESSFULLY");
+            if (utr != null) {
+                singleOrder.setCustomerUtr(utr);
+            }
+            singleOrder.setVerifiedBy("SMS_AUTO_EXACT (" + senderName + ")");
+            orderRepository.save(singleOrder);
+
+            if (utr != null) {
+                saveSmsLog(utr, amount, senderName, true);
+            }
+
+            res.put("status", "SUCCESS");
+            res.put("orderId", singleOrder.getOrderId());
+            res.put("utr", utr);
+            return res;
+        }
+
+        // प्राथमिकता 3: SMS को सेव करें ताकि जैसे ही कस्टमर UTR डाले, उसका ऑर्डर तुरंत पास हो जाए
+        if (utr != null) {
+            saveSmsLog(utr, amount, senderName, false);
+        }
+
+        res.put("status", matchingAmountOrders.size() > 1 ? "MULTIPLE_ORDERS_WAIT_UTR" : "SAVED_NO_PENDING_ORDER");
         return res;
+    }
+
+    private void saveSmsLog(String utr, Double amount, String senderName, boolean used) {
+        BankSmsLog log = new BankSmsLog();
+        log.setUtr(utr);
+        log.setAmount(amount);
+        log.setSenderName(senderName);
+        log.setUsed(used);
+        log.setReceivedAt(LocalDateTime.now());
+        smsLogRepository.save(log);
     }
 }
 
@@ -323,6 +392,7 @@ class PaymentOrder {
     private String status;
     private String customerUtr;
     private String verifiedBy;
+    private boolean requireUtr;
     private LocalDateTime createdAt;
 
     public String getOrderId() { return orderId; }
@@ -340,11 +410,44 @@ class PaymentOrder {
     public String getVerifiedBy() { return verifiedBy; }
     public void setVerifiedBy(String verifiedBy) { this.verifiedBy = verifiedBy; }
 
+    public boolean isRequireUtr() { return requireUtr; }
+    public void setRequireUtr(boolean requireUtr) { this.requireUtr = requireUtr; }
+
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+}
+
+@Entity
+@Table(name = "bank_sms_logs")
+class BankSmsLog {
+    @Id
+    private String utr;
+    private Double amount;
+    private String senderName;
+    private boolean used;
+    private LocalDateTime receivedAt;
+
+    public String getUtr() { return utr; }
+    public void setUtr(String utr) { this.utr = utr; }
+
+    public Double getAmount() { return amount; }
+    public void setAmount(Double amount) { this.amount = amount; }
+
+    public String getSenderName() { return senderName; }
+    public void setSenderName(String senderName) { this.senderName = senderName; }
+
+    public boolean isUsed() { return used; }
+    public void setUsed(boolean used) { this.used = used; }
+
+    public LocalDateTime getReceivedAt() { return receivedAt; }
+    public void setReceivedAt(LocalDateTime receivedAt) { this.receivedAt = receivedAt; }
 }
 
 @Repository
 interface OrderRepository extends JpaRepository<PaymentOrder, String> {
     List<PaymentOrder> findByStatus(String status);
+}
+
+@Repository
+interface SmsLogRepository extends JpaRepository<BankSmsLog, String> {
 }
