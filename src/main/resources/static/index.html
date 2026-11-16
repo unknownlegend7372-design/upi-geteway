@@ -3,35 +3,44 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Game Coin Checkout</title>
+    <title>Instant UPI Checkout</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0f172a; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; box-sizing: border-box; }
-        .pay-card { max-width: 380px; width: 100%; background: #1e293b; color: #ffffff; padding: 25px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.4); text-align: center; border: 1px solid #334155; }
-        .game-title { font-size: 20px; font-weight: 700; color: #38bdf8; margin-bottom: 5px; }
-        .coin-pack { font-size: 15px; color: #facc15; font-weight: 600; margin-bottom: 12px; }
-        .order-sub { font-size: 12px; color: #94a3b8; margin-bottom: 15px; }
-        .amount-tag { font-size: 34px; font-weight: 800; color: #4ade80; margin: 10px 0; }
-        .discount-badge { background-color: #064e3b; color: #6ee7b7; border: 1px solid #059669; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; margin-bottom: 10px; display: inline-block; }
-        .qr-wrapper { margin: 12px auto; padding: 12px; border-radius: 14px; display: inline-block; background: #ffffff; }
-        .qr-wrapper img { width: 200px; height: 200px; display: block; border-radius: 6px; }
+        .pay-card { max-width: 390px; width: 100%; background: #1e293b; color: #ffffff; padding: 24px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.4); text-align: center; border: 1px solid #334155; }
+        .store-title { font-size: 20px; font-weight: 700; color: #38bdf8; margin-bottom: 4px; }
+        .pack-info { font-size: 14px; color: #facc15; font-weight: 600; margin-bottom: 10px; }
+        .order-sub { font-size: 12px; color: #94a3b8; margin-bottom: 10px; }
+        .timer-pill { display: inline-block; background: #334155; color: #fbbf24; font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 12px; margin-bottom: 8px; }
+        .amount-tag { font-size: 34px; font-weight: 800; color: #4ade80; margin: 6px 0 12px 0; }
+        .qr-wrapper { margin: 8px auto; padding: 12px; border-radius: 14px; display: inline-block; background: #ffffff; transition: opacity 0.3s ease; }
+        .qr-wrapper img { width: 190px; height: 190px; display: block; border-radius: 6px; }
         .badge { display: inline-block; padding: 6px 14px; border-radius: 20px; font-weight: 700; font-size: 12px; margin-top: 10px; }
         .status-PENDING { background-color: #78350f; color: #fde68a; }
         .status-SUCCESS { background-color: #14532d; color: #86efac; }
-        .app-btn { display: none; width: 100%; background: #2563eb; color: white; text-decoration: none; padding: 12px; border-radius: 10px; font-weight: bold; margin-top: 15px; box-sizing: border-box; }
-        .note { font-size: 12px; color: #94a3b8; margin-top: 15px; }
+        .status-EXPIRED { background-color: #7f1d1d; color: #fecaca; }
+        .app-btn { display: none; width: 100%; background: #2563eb; color: white; text-decoration: none; padding: 11px; border-radius: 10px; font-weight: bold; margin-top: 12px; box-sizing: border-box; font-size: 14px; }
+        .utr-box { margin-top: 16px; background: #0f172a; padding: 14px; border-radius: 12px; border: 1px solid #334155; text-align: left; }
+        .utr-label { font-size: 12px; color: #cbd5e1; font-weight: 600; margin-bottom: 6px; display: block; }
+        .utr-row { display: flex; gap: 8px; }
+        .utr-input { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #475569; background: #1e293b; color: #ffffff; font-size: 14px; letter-spacing: 1px; outline: none; }
+        .utr-input:focus { border-color: #38bdf8; }
+        .utr-btn { background: #10b981; color: #052e16; border: none; padding: 10px 14px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; white-space: nowrap; }
+        .utr-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        .utr-msg { font-size: 12px; margin-top: 6px; min-height: 16px; line-height: 1.4; }
+        .note { font-size: 11px; color: #94a3b8; margin-top: 14px; line-height: 1.4; }
     </style>
 </head>
 <body>
 
 <div class="pay-card">
-    <div class="game-title" id="gameTitle">Game Store</div>
-    <div class="coin-pack" id="coinDisplay">🎮 Coins Pack</div>
+    <div class="store-title" id="storeTitle">Instant B2B Pay</div>
+    <div class="pack-info" id="packDisplay">⚡ Direct Recharge Checkout</div>
     <div class="order-sub">Order ID: <span id="displayOrderId">Generating...</span></div>
+    <div class="timer-pill">⏱ Valid for: <span id="timerText">03:00</span></div>
 
-    <div id="discountInfo"></div>
     <div class="amount-tag">₹ <span id="displayAmount">0.00</span></div>
 
-    <div class="qr-wrapper">
+    <div class="qr-wrapper" id="qrWrapper">
         <img id="qrImage" src="" alt="UPI QR Code">
     </div>
 
@@ -39,24 +48,41 @@
 
     <a id="intentBtn" href="#" class="app-btn">Pay via UPI App</a>
 
-    <div class="note">GPay, PhonePe, Paytm या किसी भी UPI ऐप से स्कैन करके पे करें।</div>
+    <div class="utr-box" id="utrSection">
+        <label class="utr-label" for="utrInput">पेमेंट के बाद 12-अंकों का UTR / Ref No. डालें:</label>
+        <div class="utr-row">
+            <input type="text" id="utrInput" class="utr-input" maxlength="12" inputmode="numeric" placeholder="e.g. 668609149324">
+            <button id="utrBtn" class="utr-btn" onclick="submitUtr()">Verify</button>
+        </div>
+        <div id="utrMsg" class="utr-msg"></div>
+    </div>
+
+    <div class="note">GPay, PhonePe, Paytm या किसी भी UPI ऐप से Exact Amount स्कैन करके पे करें।</div>
 </div>
 
 <script>
     let currentOrderId = null;
     let pollInterval = null;
+    let timerInterval = null;
     let merchantUpi = '';
-    let merchantName = 'Game Store';
+    let merchantName = 'Instant B2B Pay';
+    let redirectUrl = '';
+    let isPaid = false;
 
     window.addEventListener('DOMContentLoaded', () => {
         const urlParams = new URLSearchParams(window.location.search);
         
-        // गेम से आने वाले पैरामीटर्स
         const amountFromUrl = parseFloat(urlParams.get('amount')) || 10;
+        const mobileFromUrl = urlParams.get('mobile');
+        const operatorFromUrl = urlParams.get('operator');
         const coinsFromUrl = urlParams.get('coins');
-        
-        if (coinsFromUrl) {
-            document.getElementById('coinDisplay').innerText = `🪙 ${coinsFromUrl} Coins`;
+        redirectUrl = urlParams.get('redirect_url') || '';
+
+        if (mobileFromUrl) {
+            const opText = operatorFromUrl ? ` (${operatorFromUrl})` : '';
+            document.getElementById('packDisplay').innerText = `📱 ${mobileFromUrl}${opText}`;
+        } else if (coinsFromUrl) {
+            document.getElementById('packDisplay').innerText = `🪙 ${coinsFromUrl} Coins`;
         }
 
         fetch('/api/admin/get-upi')
@@ -65,7 +91,7 @@
                 if (data.upiId) merchantUpi = data.upiId;
                 if (data.merchantName) {
                     merchantName = data.merchantName;
-                    document.getElementById('gameTitle').innerText = merchantName;
+                    document.getElementById('storeTitle').innerText = merchantName;
                 }
                 initPayment(amountFromUrl);
             })
@@ -82,16 +108,21 @@
         })
         .then(res => res.json())
         .then(data => {
+            if (data.status === 'SERVICE_SUSPENDED') {
+                document.getElementById('displayStatus').innerText = "Service Temporarily Suspended";
+                document.getElementById('displayStatus').className = "badge status-EXPIRED";
+                return;
+            }
+
             currentOrderId = data.orderId || data.id;
             const finalPayAmount = parseFloat(data.amount).toFixed(2);
-            const discountP = data.discountPaise || 0;
 
             document.getElementById('displayOrderId').innerText = currentOrderId;
             document.getElementById('displayAmount').innerText = finalPayAmount;
 
-            if (discountP > 0) {
-                document.getElementById('discountInfo').innerHTML = 
-                    `<span class="discount-badge">🎉 विशेष छूट: ${discountP} पैसे की छूट!</span>`;
+            if (data.requireUtr) {
+                document.getElementById('utrMsg').style.color = '#fbbf24';
+                document.getElementById('utrMsg').innerText = '⚡ तेज़ वेरिफ़िकेशन के लिए पेमेंट के बाद 12-अंकों का UTR ज़रूर डालें।';
             }
 
             const upi = merchantUpi || 'upi@okaxis';
@@ -104,27 +135,126 @@
                 intentBtn.style.display = 'block';
             }
 
+            startTimer(180); // 3 मिनट का टाइमर
+
             if (pollInterval) clearInterval(pollInterval);
-            pollInterval = setInterval(checkOrderStatus, 2500);
+            pollInterval = setInterval(checkOrderStatus, 2000);
         })
         .catch(err => {
             alert("ऑर्डर लोड नहीं हो सका: " + err);
         });
     }
 
+    function startTimer(seconds) {
+        let remaining = seconds;
+        timerInterval = setInterval(() => {
+            if (isPaid) {
+                clearInterval(timerInterval);
+                return;
+            }
+            remaining--;
+            const mins = String(Math.floor(remaining / 60)).padStart(2, '0');
+            const secs = String(remaining % 60).padStart(2, '0');
+            document.getElementById('timerText').innerText = `${mins}:${secs}`;
+
+            if (remaining <= 0) {
+                clearInterval(timerInterval);
+                clearInterval(pollInterval);
+                const statusEl = document.getElementById('displayStatus');
+                statusEl.innerText = "QR EXPIRED - ALREADY PAID? ENTER UTR BELOW";
+                statusEl.className = "badge status-EXPIRED";
+                
+                // नया पेमेंट रोकने के लिए QR को धुंधला करें, लेकिन UTR बॉक्स चालू रखें
+                document.getElementById('qrWrapper').style.opacity = '0.2';
+                document.getElementById('intentBtn').style.display = 'none';
+                document.getElementById('utrMsg').style.color = '#fbbf24';
+                document.getElementById('utrMsg').innerText = '⚠️ समय समाप्त। यदि पैसे कट गए हैं, तो नीचे अपना 12-अंकों का UTR डालकर अभी वेरिफाई करें।';
+            }
+        }, 1000);
+    }
+
+    function submitUtr() {
+        const utrVal = document.getElementById('utrInput').value.trim();
+        const msgEl = document.getElementById('utrMsg');
+        const btn = document.getElementById('utrBtn');
+
+        if (!/^\d{12}$/.test(utrVal)) {
+            msgEl.style.color = '#f87171';
+            msgEl.innerText = '❌ कृपया सही 12-अंकों का UTR नंबर डालें।';
+            return;
+        }
+
+        btn.disabled = true;
+        btn.innerText = 'Checking...';
+        msgEl.style.color = '#38bdf8';
+        msgEl.innerText = '⏳ बैंक SMS से UTR मिलान हो रहा है...';
+
+        fetch('/api/payment/submit-utr', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderId: currentOrderId, utr: utrVal })
+        })
+        .then(res => res.json())
+        .then(data => {
+            btn.disabled = false;
+            btn.innerText = 'Verify';
+
+            if (data.status === 'UTR_ALREADY_USED' || data.status === 'INVALID_UTR') {
+                msgEl.style.color = '#f87171';
+                msgEl.innerText = '❌ ' + (data.message || 'Invalid or Used UTR');
+                return;
+            }
+
+            if (data.orderStatus && data.orderStatus.toUpperCase().includes('PAID')) {
+                markPaymentSuccess(utrVal);
+            } else {
+                msgEl.style.color = '#facc15';
+                msgEl.innerText = '✅ UTR सेव हो गया! बैंक SMS आते ही 2 सेकंड में अप्रूव हो जाएगा...';
+                // अगर 3 मिनट बाद UTR डाला गया है और SMS रास्ते में है, तो 2 सेकंड का पोलिंग फिर से चालू करें
+                if (!pollInterval) {
+                    pollInterval = setInterval(checkOrderStatus, 2000);
+                }
+            }
+        })
+        .catch(() => {
+            btn.disabled = false;
+            btn.innerText = 'Verify';
+            msgEl.style.color = '#f87171';
+            msgEl.innerText = '❌ नेटवर्क त्रुटि, पुनः प्रयास करें।';
+        });
+    }
+
     function checkOrderStatus() {
-        if (!currentOrderId) return;
+        if (!currentOrderId || isPaid) return;
         fetch(`/api/payment/status/${currentOrderId}`)
             .then(res => res.json())
             .then(data => {
                 const status = (data.status || '').toUpperCase();
                 if (status.includes('PAID') || status === 'SUCCESS') {
-                    const statusEl = document.getElementById('displayStatus');
-                    statusEl.innerText = "PAYMENT SUCCESSFUL! 🎉";
-                    statusEl.className = "badge status-SUCCESS";
-                    clearInterval(pollInterval);
+                    markPaymentSuccess(data.customerUtr || '');
                 }
             }).catch(e => console.log(e));
+    }
+
+    function markPaymentSuccess(utr) {
+        if (isPaid) return;
+        isPaid = true;
+        clearInterval(pollInterval);
+        clearInterval(timerInterval);
+
+        document.getElementById('qrWrapper').style.opacity = '1';
+        const statusEl = document.getElementById('displayStatus');
+        statusEl.innerText = "PAYMENT SUCCESSFUL! 🎉";
+        statusEl.className = "badge status-SUCCESS";
+
+        document.getElementById('utrSection').style.display = 'none';
+
+        if (redirectUrl) {
+            const sep = redirectUrl.includes('?') ? '&' : '?';
+            setTimeout(() => {
+                window.location.href = `${redirectUrl}${sep}order_id=${encodeURIComponent(currentOrderId)}&status=PAID&utr=${encodeURIComponent(utr)}`;
+            }, 1200);
+        }
     }
 </script>
 
