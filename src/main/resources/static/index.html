@@ -33,7 +33,7 @@
 <body>
 
 <div class="pay-card">
-    <div class="store-title" id="storeTitle">मोबाइल रिचार्ज</div>
+    <div class="store-title" id="storeTitle">Instant B2B Pay</div>
     <div class="pack-info" id="packDisplay">⚡ Direct Recharge Checkout</div>
     <div class="order-sub">Order ID: <span id="displayOrderId">Generating...</span></div>
     <div class="timer-pill">⏱ Valid for: <span id="timerText">03:00</span></div>
@@ -62,27 +62,21 @@
 
 <script>
     let currentOrderId = null;
-    let localOrderId = '';
-    let notifyUrl = '';
     let pollInterval = null;
     let timerInterval = null;
     let merchantUpi = '';
-    let merchantName = 'मोबाइल रिचार्ज';
+    let merchantName = 'Instant B2B Pay';
     let redirectUrl = '';
     let isPaid = false;
 
     window.addEventListener('DOMContentLoaded', () => {
         const urlParams = new URLSearchParams(window.location.search);
-
+        
         const amountFromUrl = parseFloat(urlParams.get('amount')) || 10;
         const mobileFromUrl = urlParams.get('mobile');
         const operatorFromUrl = urlParams.get('operator');
         const coinsFromUrl = urlParams.get('coins');
-        localOrderId = urlParams.get('local_order_id') || '';
-        notifyUrl = urlParams.get('notify_url') || '';
         redirectUrl = urlParams.get('redirect_url') || '';
-
-        document.getElementById('storeTitle').innerText = merchantName;
 
         if (mobileFromUrl) {
             const opText = operatorFromUrl ? ` (${operatorFromUrl})` : '';
@@ -94,11 +88,11 @@
         fetch('/api/admin/get-upi')
             .then(res => res.json())
             .then(data => {
-                if (data.upiId && data.upiId.trim()) {
-                    merchantUpi = data.upiId.trim();
+                if (data.upiId) merchantUpi = data.upiId;
+                if (data.merchantName) {
+                    merchantName = data.merchantName;
+                    document.getElementById('storeTitle').innerText = merchantName;
                 }
-                merchantName = 'मोबाइल रिचार्ज';
-                document.getElementById('storeTitle').innerText = merchantName;
                 initPayment(amountFromUrl);
             })
             .catch(() => {
@@ -110,11 +104,7 @@
         fetch('/api/payment/create-order', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                amount: baseAmt,
-                local_order_id: localOrderId,
-                notify_url: notifyUrl
-            })
+            body: JSON.stringify({ amount: baseAmt })
         })
         .then(res => res.json())
         .then(data => {
@@ -135,7 +125,7 @@
                 document.getElementById('utrMsg').innerText = '⚡ तेज़ वेरिफ़िकेशन के लिए पेमेंट के बाद 12-अंकों का UTR ज़रूर डालें।';
             }
 
-            const upi = merchantUpi || '';
+            const upi = merchantUpi || 'upi@okaxis';
             const upiString = `upi://pay?pa=${encodeURIComponent(upi)}&pn=${encodeURIComponent(merchantName)}&am=${finalPayAmount}&cu=INR`;
             document.getElementById('qrImage').src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(upiString)}`;
 
@@ -145,7 +135,7 @@
                 intentBtn.style.display = 'block';
             }
 
-            startTimer(180);
+            startTimer(180); // 3 मिनट का टाइमर
 
             if (pollInterval) clearInterval(pollInterval);
             pollInterval = setInterval(checkOrderStatus, 2000);
@@ -173,7 +163,8 @@
                 const statusEl = document.getElementById('displayStatus');
                 statusEl.innerText = "QR EXPIRED - ALREADY PAID? ENTER UTR BELOW";
                 statusEl.className = "badge status-EXPIRED";
-
+                
+                // नया पेमेंट रोकने के लिए QR को धुंधला करें, लेकिन UTR बॉक्स चालू रखें
                 document.getElementById('qrWrapper').style.opacity = '0.2';
                 document.getElementById('intentBtn').style.display = 'none';
                 document.getElementById('utrMsg').style.color = '#fbbf24';
@@ -219,6 +210,7 @@
             } else {
                 msgEl.style.color = '#facc15';
                 msgEl.innerText = '✅ UTR सेव हो गया! बैंक SMS आते ही 2 सेकंड में अप्रूव हो जाएगा...';
+                // अगर 3 मिनट बाद UTR डाला गया है और SMS रास्ते में है, तो 2 सेकंड का पोलिंग फिर से चालू करें
                 if (!pollInterval) {
                     pollInterval = setInterval(checkOrderStatus, 2000);
                 }
