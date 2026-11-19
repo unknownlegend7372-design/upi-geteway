@@ -62,6 +62,8 @@
 
 <script>
     let currentOrderId = null;
+    let localOrderId = '';
+    let notifyUrl = '';
     let pollInterval = null;
     let timerInterval = null;
     let merchantUpi = '';
@@ -71,11 +73,13 @@
 
     window.addEventListener('DOMContentLoaded', () => {
         const urlParams = new URLSearchParams(window.location.search);
-        
+
         const amountFromUrl = parseFloat(urlParams.get('amount')) || 10;
         const mobileFromUrl = urlParams.get('mobile');
         const operatorFromUrl = urlParams.get('operator');
         const coinsFromUrl = urlParams.get('coins');
+        localOrderId = urlParams.get('local_order_id') || '';
+        notifyUrl = urlParams.get('notify_url') || '';
         redirectUrl = urlParams.get('redirect_url') || '';
 
         if (mobileFromUrl) {
@@ -104,7 +108,11 @@
         fetch('/api/payment/create-order', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ amount: baseAmt })
+            body: JSON.stringify({
+                amount: baseAmt,
+                local_order_id: localOrderId,
+                notify_url: notifyUrl
+            })
         })
         .then(res => res.json())
         .then(data => {
@@ -163,8 +171,7 @@
                 const statusEl = document.getElementById('displayStatus');
                 statusEl.innerText = "QR EXPIRED - ALREADY PAID? ENTER UTR BELOW";
                 statusEl.className = "badge status-EXPIRED";
-                
-                // नया पेमेंट रोकने के लिए QR को धुंधला करें, लेकिन UTR बॉक्स चालू रखें
+
                 document.getElementById('qrWrapper').style.opacity = '0.2';
                 document.getElementById('intentBtn').style.display = 'none';
                 document.getElementById('utrMsg').style.color = '#fbbf24';
@@ -210,7 +217,6 @@
             } else {
                 msgEl.style.color = '#facc15';
                 msgEl.innerText = '✅ UTR सेव हो गया! बैंक SMS आते ही 2 सेकंड में अप्रूव हो जाएगा...';
-                // अगर 3 मिनट बाद UTR डाला गया है और SMS रास्ते में है, तो 2 सेकंड का पोलिंग फिर से चालू करें
                 if (!pollInterval) {
                     pollInterval = setInterval(checkOrderStatus, 2000);
                 }
