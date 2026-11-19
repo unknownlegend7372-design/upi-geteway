@@ -33,7 +33,7 @@
 <body>
 
 <div class="pay-card">
-    <div class="store-title" id="storeTitle">Instant B2B Pay</div>
+    <div class="store-title" id="storeTitle">मोबाइल रिचार्ज</div>
     <div class="pack-info" id="packDisplay">⚡ Direct Recharge Checkout</div>
     <div class="order-sub">Order ID: <span id="displayOrderId">Generating...</span></div>
     <div class="timer-pill">⏱ Valid for: <span id="timerText">03:00</span></div>
@@ -67,7 +67,7 @@
     let pollInterval = null;
     let timerInterval = null;
     let merchantUpi = '';
-    let merchantName = 'Instant B2B Pay';
+    let merchantName = 'मोबाइल रिचार्ज';
     let redirectUrl = '';
     let isPaid = false;
 
@@ -82,6 +82,8 @@
         notifyUrl = urlParams.get('notify_url') || '';
         redirectUrl = urlParams.get('redirect_url') || '';
 
+        document.getElementById('storeTitle').innerText = merchantName;
+
         if (mobileFromUrl) {
             const opText = operatorFromUrl ? ` (${operatorFromUrl})` : '';
             document.getElementById('packDisplay').innerText = `📱 ${mobileFromUrl}${opText}`;
@@ -92,11 +94,11 @@
         fetch('/api/admin/get-upi')
             .then(res => res.json())
             .then(data => {
-                if (data.upiId) merchantUpi = data.upiId;
-                if (data.merchantName) {
-                    merchantName = data.merchantName;
-                    document.getElementById('storeTitle').innerText = merchantName;
+                if (data.upiId && data.upiId.trim()) {
+                    merchantUpi = data.upiId.trim();
                 }
+                merchantName = 'मोबाइल रिचार्ज';
+                document.getElementById('storeTitle').innerText = merchantName;
                 initPayment(amountFromUrl);
             })
             .catch(() => {
@@ -133,7 +135,7 @@
                 document.getElementById('utrMsg').innerText = '⚡ तेज़ वेरिफ़िकेशन के लिए पेमेंट के बाद 12-अंकों का UTR ज़रूर डालें।';
             }
 
-            const upi = merchantUpi || 'upi@okaxis';
+            const upi = merchantUpi || '';
             const upiString = `upi://pay?pa=${encodeURIComponent(upi)}&pn=${encodeURIComponent(merchantName)}&am=${finalPayAmount}&cu=INR`;
             document.getElementById('qrImage').src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(upiString)}`;
 
@@ -143,7 +145,7 @@
                 intentBtn.style.display = 'block';
             }
 
-            startTimer(180); // 3 मिनट का टाइमर
+            startTimer(180);
 
             if (pollInterval) clearInterval(pollInterval);
             pollInterval = setInterval(checkOrderStatus, 2000);
