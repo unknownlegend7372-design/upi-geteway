@@ -9,8 +9,14 @@ import org.springframework.web.bind.annotation.*;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -23,6 +29,9 @@ public class DemoApplication {
     private final SmsLogRepository smsLogRepository;
     private final LicenseService licenseService;
     private String merchantUpiId = "";
+
+    // अपना Flask रिचार्ज ऐप का बेस URL/डोमेन यहाँ सेट करें
+    private static final String DEFAULT_RECHARGE_NOTIFY_URL = "http://localhost:5000/recharge/gateway-notify";
 
     public DemoApplication(OrderRepository orderRepository, SmsLogRepository smsLogRepository, LicenseService licenseService) {
         this.orderRepository = orderRepository;
@@ -70,9 +79,25 @@ public class DemoApplication {
         }
 
         Double baseAmount = 10.0;
+        String localOrderId = "";
+        String notifyUrl = "";
+
         try {
-            if (payload != null && payload.containsKey("amount") && payload.get("amount") != null) {
-                baseAmount = Double.valueOf(payload.get("amount").toString());
+            if (payload != null) {
+                if (payload.containsKey("amount") && payload.get("amount") != null) {
+                    baseAmount = Double.valueOf(payload.get("amount").toString());
+                }
+                if (payload.get("local_order_id") != null) {
+                    localOrderId = payload.get("local_order_id").toString().trim();
+                } else if (payload.get("localOrderId") != null) {
+                    localOrderId = payload.get("localOrderId").toString().trim();
+                }
+
+                if (payload.get("notify_url") != null) {
+                    notifyUrl = payload.get("notify_url").toString().trim();
+                } else if (payload.get("notifyUrl") != null) {
+                    notifyUrl = payload.get("notifyUrl").toString().trim();
+                }
             }
         } catch (Exception e) {
             baseAmount = 10.0;
@@ -95,13 +120,15 @@ public class DemoApplication {
         }
 
         boolean requireUtr = activeSameAmountCount > 0;
-        String upiToUse = (this.merchantUpiId != null && !this.merchantUpiId.isEmpty()) 
+        String upiToUse = (this.merchantUpiId != null && !this.merchantUpiId.isEmpty())
                           ? this.merchantUpiId : "";
 
         String orderId = "ORD" + System.currentTimeMillis() + (new Random().nextInt(90) + 10);
 
         PaymentOrder order = new PaymentOrder();
         order.setOrderId(orderId);
+        order.setLocalOrderId(localOrderId);
+        order.setNotifyUrl(notifyUrl);
         order.setAmount(finalAmount);
         order.setStatus("PENDING");
         order.setCustomerUtr("Not submitted");
@@ -112,6 +139,7 @@ public class DemoApplication {
 
         res.put("orderId", orderId);
         res.put("id", orderId);
+        res.put("localOrderId", localOrderId);
         res.put("amount", finalAmount);
         res.put("originalAmount", baseAmount);
         res.put("discountPaise", 0);
@@ -130,6 +158,7 @@ public class DemoApplication {
             PaymentOrder order = opt.get();
             res.put("orderId", order.getOrderId());
             res.put("id", order.getOrderId());
+            res.put("localOrderId", order.getLocalOrderId());
             res.put("status", order.getStatus());
             res.put("amount", order.getAmount());
             res.put("requireUtr", order.isRequireUtr());
@@ -181,6 +210,7 @@ public class DemoApplication {
             }
 
             orderRepository.save(order);
+            notifyRechargeIfPaid(order);
             res.put("status", "SUCCESS");
             res.put("orderStatus", order.getStatus());
         } else {
@@ -208,6 +238,7 @@ public class DemoApplication {
             order.setStatus(status);
             order.setVerifiedBy("AGENT_MANUAL");
             orderRepository.save(order);
+            notifyRechargeIfPaid(order);
             res.put("status", "SUCCESS");
         } else {
             res.put("status", "NOT_FOUND");
@@ -255,7 +286,7 @@ public class DemoApplication {
         String lower = message.toLowerCase();
 
         // नियम 1: कोई भी Debit / Sent / Paid मैसेज तुरंत ब्लॉक करें
-        if (lower.contains("debited") || lower.contains("sent") || lower.contains("paid") || 
+        if (lower.contains("debited") || lower.contains("sent") || lower.contains("paid") ||
             lower.contains("withdrawn") || lower.contains("dr. from") || lower.contains("dr from")) {
             res.put("status", "IGNORED_DEBIT");
             return res;
@@ -322,6 +353,7 @@ public class DemoApplication {
                     order.setStatus("PAID SUCCESSFULLY");
                     order.setVerifiedBy("SMS_UTR_MATCH (" + senderName + ")");
                     orderRepository.save(order);
+                    notifyRechargeIfPaid(order);
 
                     saveSmsLog(utr, amount, senderName, true);
                     res.put("status", "SUCCESS");
@@ -352,6 +384,7 @@ public class DemoApplication {
             }
             singleOrder.setVerifiedBy("SMS_AUTO_EXACT (" + senderName + ")");
             orderRepository.save(singleOrder);
+            notifyRechargeIfPaid(singleOrder);
 
             if (utr != null) {
                 saveSmsLog(utr, amount, senderName, true);
@@ -372,6 +405,54 @@ public class DemoApplication {
         return res;
     }
 
+    private void notifyRechargeIfPaid(PaymentOrder order) {
+        if (order == null || !"PAID SUCCESSFULLY".equals(order.getStatus())) {
+            return;
+        }
+        if (order.getLocalOrderId() == null || order.getLocalOrderId().trim().isEmpty()) {
+            return;
+        }
+
+        String targetUrl = (order.getNotifyUrl() != null && !order.getNotifyUrl().trim().isEmpty())
+                ? order.getNotifyUrl().trim()
+                : DEFAULT_RECHARGE_NOTIFY_URL;
+
+        String utrVal = (order.getCustomerUtr() != null && !"Not submitted".equals(order.getCustomerUtr()))
+                ? order.getCustomerUtr() : "";
+
+        String jsonBody = String.format(
+            "{\"local_order_id\":\"%s\",\"gateway_order_id\":\"%s\",\"order_id\":\"%s\",\"status\":\"PAID\",\"amount\":%s,\"utr\":\"%s\"}",
+            escapeJson(order.getLocalOrderId()),
+            escapeJson(order.getOrderId()),
+            escapeJson(order.getOrderId()),
+            order.getAmount() != null ? order.getAmount() : 0.0,
+            escapeJson(utrVal)
+        );
+
+        CompletableFuture.runAsync(() -> {
+            try {
+                HttpClient client = HttpClient.newBuilder()
+                        .connectTimeout(Duration.ofSeconds(5))
+                        .build();
+                HttpRequest req = HttpRequest.newBuilder()
+                        .uri(URI.create(targetUrl))
+                        .timeout(Duration.ofSeconds(8))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                        .build();
+                HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
+                System.out.println(">>> RECHARGE NOTIFY [" + order.getLocalOrderId() + "] -> " + resp.statusCode() + " : " + resp.body());
+            } catch (Exception e) {
+                System.out.println(">>> RECHARGE NOTIFY ERR: " + e.getMessage());
+            }
+        });
+    }
+
+    private String escapeJson(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
     private void saveSmsLog(String utr, Double amount, String senderName, boolean used) {
         BankSmsLog log = new BankSmsLog();
         log.setUtr(utr);
@@ -388,6 +469,8 @@ public class DemoApplication {
 class PaymentOrder {
     @Id
     private String orderId;
+    private String localOrderId;
+    private String notifyUrl;
     private Double amount;
     private String status;
     private String customerUtr;
@@ -397,6 +480,12 @@ class PaymentOrder {
 
     public String getOrderId() { return orderId; }
     public void setOrderId(String orderId) { this.orderId = orderId; }
+
+    public String getLocalOrderId() { return localOrderId; }
+    public void setLocalOrderId(String localOrderId) { this.localOrderId = localOrderId; }
+
+    public String getNotifyUrl() { return notifyUrl; }
+    public void setNotifyUrl(String notifyUrl) { this.notifyUrl = notifyUrl; }
 
     public Double getAmount() { return amount; }
     public void setAmount(Double amount) { this.amount = amount; }
